@@ -1,0 +1,8 @@
+{
+  "name": "SwasthyaQueue",
+  "description": "Appointment se Consultation tak — Queue ko Simple Banayein. Digital appointment, queue-management, doctor-availability, and hospital navigation for Indian government hospitals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,295 @@
+// SWASTHYAQUEUE PostgreSQL Schema
+// Digital appointment, queue-management, doctor-availability,
+// and hospital-navigation platform for government hospitals in India.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  PATIENT
+  DOCTOR
+  STAFF
+  BENEFIT_DESK
+  ADMIN
+}
+
+enum DoctorStatus {
+  AVAILABLE
+  UNAVAILABLE
+  BREAK
+}
+
+enum SlotStatus {
+  AVAILABLE
+  BOOKED
+  BLOCKED
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CHECKED_IN
+  IN_CONSULTATION
+  COMPLETED
+  CANCELLED
+}
+
+enum QueueTokenStatus {
+  WAITING
+  CALLED
+  IN_CONSULTATION
+  COMPLETED
+  SKIPPED
+}
+
+enum BenefitVerificationStatus {
+  NOT_VERIFIED
+  VERIFICATION_PENDING
+  OTP_SENT
+  VERIFIED
+  VERIFICATION_FAILED
+  NEEDS_HOSPITAL_VERIFICATION
+  UNAVAILABLE
+}
+
+enum VerificationSource {
+  DEMO_SANDBOX
+  AUTHORIZED_GOVERNMENT_API
+}
+
+enum FacilityCategory {
+  REGISTRATION
+  PHARMACY
+  OPD
+  LABORATORY
+  HELP_DESK
+  BLOOD_BANK
+  EMERGENCY
+  RADIOLOGY
+}
+
+model User {
+  id           String     @id @default(uuid())
+  role         Role       @default(PATIENT)
+  name         String
+  email        String?    @unique
+  mobile       String?    @unique
+  passwordHash String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  patientProfile Patient?
+  doctorProfile  Doctor?
+  auditLogs      AuditLog[]
+
+  @@map("users")
+}
+
+model Hospital {
+  id           String      @id @default(uuid())
+  name         String
+  state        String
+  district     String
+  address      String
+  pinCode      String
+  contactPhone String
+  facilities   String[]    @default([])
+  bedCount     Int         @default(250)
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+
+  departments  Department[]
+  doctors      Doctor[]
+  appointments Appointment[]
+  queueTokens  QueueToken[]
+  locations    HospitalLocation[]
+
+  @@index([state, district])
+  @@map("hospitals")
+}
+
+model Department {
+  id          String   @id @default(uuid())
+  hospitalId  String
+  hospital    Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  name        String
+  code        String
+  description String?
+  floor       String   @default("1st Floor")
+  block       String   @default("OPD Block A")
+
+  doctors      Doctor[]
+  appointments Appointment[]
+  queueTokens  QueueToken[]
+
+  @@map("departments")
+}
+
+model Doctor {
+  id             String       @id @default(uuid())
+  userId         String?      @unique
+  user           User?        @relation(fields: [userId], references: [id])
+  hospitalId     String
+  hospital       Hospital     @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  departmentId   String
+  department     Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  name           String
+  qualification  String
+  specialization String
+  roomNumber     String
+  floor          String
+  block          String       @default("OPD Block A")
+  status         DoctorStatus @default(AVAILABLE)
+  avgConsultMin  Int          @default(10)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  schedules      DoctorSchedule[]
+  appointments   Appointment[]
+  queueTokens    QueueToken[]
+
+  @@map("doctors")
+}
+
+model DoctorSchedule {
+  id        String     @id @default(uuid())
+  doctorId  String
+  doctor    Doctor     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  date      String     // YYYY-MM-DD
+  timeSlot  String     // e.g. "09:00 AM"
+  status    SlotStatus @default(AVAILABLE)
+
+  @@unique([doctorId, date, timeSlot])
+  @@map("doctor_schedules")
+}
+
+model Patient {
+  id             String        @id @default(uuid())
+  userId         String        @unique
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  mobile         String
+  age            Int
+  gender         String
+  abhaAddress    String?
+  createdAt      DateTime      @default(now())
+
+  appointments   Appointment[]
+  verifications  BenefitVerification[]
+
+  @@map("patients")
+}
+
+model Appointment {
+  id                   String                    @id @default(uuid())
+  appointmentRef       String                    @unique // Format: SWQ-2026-XXXXX
+  hospitalId           String
+  hospital             Hospital                  @relation(fields: [hospitalId], references: [id])
+  departmentId         String
+  department           Department                @relation(fields: [departmentId], references: [id])
+  doctorId             String
+  doctor               Doctor                    @relation(fields: [doctorId], references: [id])
+  patientId            String
+  patient              Patient                   @relation(fields: [patientId], references: [id])
+  patientName          String
+  patientMobile        String
+  patientAge           Int
+  date                 String                    // YYYY-MM-DD
+  timeSlot             String                    // e.g. "10:30 AM"
+  visitReason          String?
+  currentCondition     String?                   // Brief non-sensitive main complaint
+  status               AppointmentStatus         @default(BOOKED)
+  benefitStatus        BenefitVerificationStatus @default(NOT_VERIFIED)
+  benefitVerificationId String?
+  benefitVerification  BenefitVerification?     @relation(fields: [benefitVerificationId], references: [id])
+  checkedInAt          DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+
+  queueToken           QueueToken?
+
+  @@index([hospitalId, date])
+  @@index([doctorId, date])
+  @@map("appointments")
+}
+
+model QueueToken {
+  id                   String           @id @default(uuid())
+  tokenNumber          String           // e.g. "A-27"
+  hospitalId           String
+  hospital             Hospital         @relation(fields: [hospitalId], references: [id])
+  departmentId         String
+  department           Department       @relation(fields: [departmentId], references: [id])
+  doctorId             String
+  doctor               Doctor           @relation(fields: [doctorId], references: [id])
+  appointmentId        String           @unique
+  appointment          Appointment      @relation(fields: [appointmentId], references: [id])
+  sequenceNumber       Int
+  status               QueueTokenStatus @default(WAITING)
+  estimatedWaitMinutes Int              @default(15)
+  date                 String           // YYYY-MM-DD
+  calledAt             DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime         @default(now())
+
+  @@unique([hospitalId, departmentId, doctorId, date, tokenNumber])
+  @@index([hospitalId, doctorId, date, status])
+  @@map("queue_tokens")
+}
+
+model HospitalLocation {
+  id                String           @id @default(uuid())
+  hospitalId        String
+  hospital          Hospital         @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  name              String
+  category          FacilityCategory
+  floor             String
+  room              String
+  building          String           @default("Main Hospital Building")
+  routeInstructions String[]         @default([])
+  operatingHours    String           @default("08:00 AM - 04:00 PM")
+
+  @@map("hospital_locations")
+}
+
+model BenefitVerification {
+  id                 String                    @id @default(uuid())
+  patientId          String
+  patient            Patient                   @relation(fields: [patientId], references: [id])
+  patientIdentifier  String                    // Masked PM-JAY / Ration Card / State ID
+  schemeName         String                    // e.g. "PM-JAY (Ayushman Bharat)" or "Mukhyamantri Amrutum"
+  verificationStatus BenefitVerificationStatus @default(NOT_VERIFIED)
+  beneficiaryStatus  String?                   // e.g. "ELIGIBLE_FOR_VERIFICATION"
+  verifiedAt         DateTime?
+  source             VerificationSource        @default(DEMO_SANDBOX)
+  message            String
+  retryCount         Int                       @default(0)
+  lastAttemptAt      DateTime                  @default(now())
+
+  appointments       Appointment[]
+
+  @@map("benefit_verifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  timestamp  DateTime @default(now())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  role       Role?
+  action     String   // e.g. "BENEFIT_VERIFICATION_REQUESTED", "OTP_REQUESTED", "QUEUE_TOKEN_GENERATED"
+  resource   String   // e.g. "BenefitVerification", "Appointment", "QueueToken"
+  resourceId String?
+  status     String   // "SUCCESS" | "FAILED" | "DENIED"
+  ipAddress  String?
+
+  @@index([timestamp])
+  @@index([userId])
+  @@map("audit_logs")
+}
